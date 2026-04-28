@@ -1,0 +1,25 @@
+{
+  "project": {
+    "name": "{{title}}",
+    "genre": "{{genre}}",
+    "author": "{{author}}",
+    "estimated_chapters": 50,
+    "writing_type": "tomato"
+  },
+  "progress": {
+    "current_chapter": 0,
+    "completed_chapters": [],
+    "status": "initialized",
+    "synced_up_to_chapter": 0
+  },
+  "summary": {
+    "latest_events": [],
+    "pending_foreshadowing": [],
+    "active_conflicts": []
+  },
+  "config": {
+    "word_limits": {"min": 3000, "max": 3500}
+  },
+  "created_at": "",
+  "last_updated": ""
+}

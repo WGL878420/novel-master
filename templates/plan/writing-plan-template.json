@@ -1,0 +1,28 @@
+{
+  "title": "",
+  "genre": "",
+  "author": "",
+  "total_chapters": 0,
+  "total_volumes": 1,
+  "structure": "three-act",
+  "engine": "",
+  "volumes": [
+    {
+      "number": 1,
+      "title": "",
+      "start_chapter": 1,
+      "end_chapter": 0,
+      "goal": "",
+      "climax": ""
+    }
+  ],
+  "characters": [],
+  "current_chapter": 0,
+  "status": "planned",
+  "quality_gates": {
+    "word_count_min": 2000,
+    "word_count_max": 6000,
+    "require_hook": true,
+    "anti_ai_threshold": 3.0
+  }
+}

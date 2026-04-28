@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Demo project state (large generated files)
+demo/*/knowledge/
+demo/*/gates/
+demo/*/state/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code
+.claude/settings.json
+.claude/settings.local.json
+.claude/scheduled_tasks.json
