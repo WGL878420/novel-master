@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Novel Master: 番茄小说发布 — 基于 Playwright 浏览器会话 + HTTP API
+"""Novel Master: 番茄小说发布 — 基于 Playwright 浏览器表单上传
 
-技术方案参考 webnovel-writer-opencode（Playwright 拿 Cookie，页面内 fetch 调 API），
-比纯 UI 自动化更稳定（不依赖编辑器 DOM）。
+技术方案：通过 Playwright 打开番茄作家后台的章节编辑页面，
+直接填写章号、标题和正文后点击保存。比 HTTP API 方式更稳定，
+不依赖可能变更的后端接口。
 
 子命令:
     setup     首次配置（安装 Playwright + 登录保存会话）
     login     单独登录（刷新过期的会话）
     list-books 列出作家后台已有书籍
     create-book 创建新书
-    upload    上传章节到草稿箱
+    upload    上传章节到草稿箱（通过浏览器页面表单）
     status    查看发布状态
 """
 
@@ -141,19 +142,17 @@ async def _save_auth_state(context, auth_state_path: Path):
 
 
 async def _check_logged_in(page) -> bool:
-    """检查是否已登录番茄作家后台"""
-    try:
-        await page.goto(WRITER_HOME_URL, timeout=15000)
-        await page.wait_for_load_state("networkidle", timeout=10000)
-    except Exception:
-        pass
-
+    """检查当前页面是否已登录（不导航，仅检查当前页）"""
     url = page.url
     if "login" in url or "passport" in url:
         return False
 
+    try:
+        body_text = await page.inner_text("body")
+    except Exception:
+        return False
+
     login_indicators = ["扫码登录", "手机号登录", "验证码登录"]
-    body_text = await page.inner_text("body")
     for indicator in login_indicators:
         if indicator in body_text:
             return False
@@ -164,6 +163,16 @@ async def _check_logged_in(page) -> bool:
             return True
 
     return False
+
+
+async def _navigate_and_check_login(page) -> bool:
+    """导航到作家后台并检查登录状态"""
+    try:
+        await page.goto(WRITER_HOME_URL, timeout=15000)
+        await page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception:
+        pass
+    return await _check_logged_in(page)
 
 
 # ========== FanqieClient: 页面内 fetch 调 API ==========
@@ -311,6 +320,43 @@ def _parse_chapter_file(filepath: Path) -> Dict:
     }
 
 
+def _parse_chapter_browser(filepath: Path) -> Dict:
+    """解析 MD 文件，返回浏览器上传所需的信息"""
+    text = read_md(filepath)
+    lines = text.split("\n")
+
+    # 章号从文件名取：第009章-魏府.md → 9
+    fn_match = re.search(r"第0*(\d+)章", filepath.name)
+    chapter_num = fn_match.group(1) if fn_match else str(chapter_number(filepath.name))
+
+    # 标题从第一行取：'# 第九章 魏府' → '魏府'
+    title_line = lines[0].strip()
+    if title_line.startswith("#"):
+        title_line = title_line.lstrip("#").strip()
+    chapter_name = re.sub(r"^第\d*[零一二三四五六七八九十百千]*章[\s_\-]*", "", title_line).strip()
+
+    # 正文（跳过标题行）
+    body_lines = [l for l in lines[1:] if not l.strip().startswith("#")]
+    body = "\n".join(body_lines).strip()
+
+    # 转 HTML
+    paragraphs = []
+    for line in body.split("\n"):
+        line = line.strip()
+        if line:
+            escaped = line.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+            paragraphs.append(f"<p>{escaped}</p>")
+    body_html = "".join(paragraphs)
+
+    return {
+        "file": str(filepath),
+        "chapter_num": chapter_num,
+        "chapter_name": chapter_name,
+        "body_html": body_html,
+        "word_count": count_chinese_chars(body),
+    }
+
+
 def _text_to_html(text: str) -> str:
     """正文转 HTML（按行拆成 <p> 标签），番茄 API 要求 HTML 格式"""
     paragraphs = []
@@ -362,7 +408,7 @@ async def cmd_login(args):
     pw, browser, context, page = await _launch_browser(auth_path)
 
     try:
-        if await _check_logged_in(page):
+        if await _navigate_and_check_login(page):
             print("✅ 已经是登录状态，无需重新登录")
             await _save_auth_state(context, auth_path)
             return 0
@@ -370,8 +416,6 @@ async def cmd_login(args):
         print("\n📱 请在浏览器中完成登录（扫码 / 手机号 / 密码均可）")
         print("   登录成功后会自动检测，无需手动操作。")
         print("   超时时间：180秒\n")
-
-        await page.goto(WRITER_HOME_URL, timeout=30000)
 
         for i in range(90):
             await asyncio.sleep(2)
@@ -407,7 +451,7 @@ async def cmd_list_books(args):
     pw, browser, context, page = await _launch_browser(auth_path)
 
     try:
-        if not await _check_logged_in(page):
+        if not await _navigate_and_check_login(page):
             print("❌ 登录已过期，请重新登录: python3 fanqie_publish.py login")
             return 1
 
@@ -448,7 +492,7 @@ async def cmd_create_book(args):
     pw, browser, context, page = await _launch_browser(auth_path)
 
     try:
-        if not await _check_logged_in(page):
+        if not await _navigate_and_check_login(page):
             print("❌ 登录已过期，请重新登录")
             return 1
 
@@ -474,8 +518,45 @@ async def cmd_create_book(args):
         await pw.stop()
 
 
+async def _upload_via_browser(page, book_id: str, ch: Dict) -> bool:
+    """通过浏览器页面表单上传单章到草稿箱"""
+    try:
+        url = f"https://fanqienovel.com/main/writer/{book_id}/publish/?enter_from=newchapter"
+        await page.goto(url, timeout=30000)
+        await page.wait_for_timeout(5000)
+
+        # 填章号（第 [N] 章）
+        num_input = page.locator("span.left-input input")
+        await num_input.wait_for(timeout=10000)
+        await num_input.fill(str(ch["chapter_num"]))
+
+        # 填标题
+        title_input = page.locator('input[placeholder*="标题"]')
+        await title_input.wait_for(timeout=5000)
+        await title_input.fill(ch["chapter_name"])
+
+        # 填正文（ProseMirror 编辑器）
+        await page.evaluate("""(html) => {
+            const editor = document.querySelector('.ProseMirror');
+            if (editor) {
+                editor.innerHTML = html;
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        }""", ch["body_html"])
+
+        # 点击存草稿
+        save_btn = page.locator('button:has-text("存草稿")')
+        await save_btn.wait_for(timeout=5000)
+        await save_btn.click()
+        await page.wait_for_timeout(5000)
+        return True
+    except Exception as e:
+        print(f"⚠️  浏览器上传异常: {e}")
+        return False
+
+
 async def cmd_upload(args):
-    """上传章节到草稿箱"""
+    """上传章节到草稿箱（浏览器表单方式）"""
     if not _check_playwright():
         return 1
 
@@ -541,7 +622,7 @@ async def cmd_upload(args):
     total_chars = 0
     chapters_to_upload = []
     for f in chapter_files:
-        parsed = _parse_chapter_file(f)
+        parsed = _parse_chapter_browser(f)
         total_chars += parsed["word_count"]
         if total_chars > DAILY_CHAR_LIMIT:
             print(f"⚠️  累计字数 {total_chars} 超过日限 {DAILY_CHAR_LIMIT}，截止到第{parsed['chapter_num']}章")
@@ -550,38 +631,30 @@ async def cmd_upload(args):
 
     print(f"\n📤 准备上传 {len(chapters_to_upload)} 章到草稿箱（book_id: {book_id}）")
     print(f"   总字数: {total_chars}")
-    print(f"   模式: {'草稿' if args.mode == 'draft' else '立即发布'}\n")
 
     pw, browser, context, page = await _launch_browser(auth_path)
 
     try:
-        if not await _check_logged_in(page):
+        if not await _navigate_and_check_login(page):
             print("❌ 登录已过期，请重新登录: python3 fanqie_publish.py login")
             return 1
 
         # 刷新认证状态
         await _save_auth_state(context, auth_path)
 
-        client = FanqieClient(page)
         success_count = 0
         fail_count = 0
 
         for ch in chapters_to_upload:
-            content_html = _text_to_html(ch["body"])
-            print(f"  📝 上传第{ch['chapter_num']:03d}章: {ch['display_title']} ({ch['word_count']}字)...", end=" ")
+            print(f"  📝 上传第{ch['chapter_num']}章: {ch['chapter_name']} ({ch['word_count']}字)...", end=" ")
 
-            ok = await client.save_draft(
-                book_id=book_id,
-                title=ch["title"],
-                content_html=content_html,
-                chapter_serial=ch["chapter_num"],
-            )
+            ok = await _upload_via_browser(page, book_id, ch)
 
             if ok:
                 print("✅")
                 success_count += 1
                 pub_state["uploaded_chapters"][str(ch["chapter_num"])] = {
-                    "title": ch["title"],
+                    "title": f"第{ch['chapter_num']}章 {ch['chapter_name']}",
                     "word_count": ch["word_count"],
                     "mode": args.mode,
                     "uploaded_at": datetime.now().isoformat(),
