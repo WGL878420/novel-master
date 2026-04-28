@@ -11,9 +11,7 @@ venv/
 Thumbs.db
 
 # Demo project state (large generated files)
-demo/*/knowledge/
-demo/*/gates/
-demo/*/state/
+demo/*
 
 # IDE
 .idea/

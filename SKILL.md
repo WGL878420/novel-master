@@ -3,7 +3,7 @@ name: novel-master
 description: |
   综合小说创作系统。整合了工程流程(PenglongHuang)、手艺知识库(Tomsawyerhu + oh-story)、一致性保障(leenbj + Claude-Book)、去AI味(Humanizer-zh)四大维度。
   支持从选题诊断到完稿校验的全流程，内置语料检索、知识图谱、事件矩阵、质量门禁等机制。
-  触发关键词：写小说、创作故事、长篇写作、网文创作
+  触发关键词：写小说、创作故事、长篇写作、网文创作、novel、小说
 allowed-tools:
   - Bash
   - Read
@@ -19,16 +19,16 @@ allowed-tools:
 
 ## 路径约定
 
-本文档中 `{skill_dir}` 指本 SKILL.md 所在的目录（即 novel-system 的根目录）。
+本文档中 `{skill_dir}` 指本 SKILL.md 所在的目录（即 novel-master 的根目录）。
 
 ## 安装
 
 ```bash
 # 1. 克隆仓库
-git clone git@github.com:<your-username>/novel-system.git
+git clone git@github.com:WGL878420/novel-master.git
 
 # 2. 创建软链接到 Claude Code 技能目录
-ln -s $(pwd)/novel-system ~/.claude/skills/novel-master
+ln -s $(pwd)/novel-master ~/.claude/skills/novel-master
 
 # 3. 验证
 claude "写小说"  # 应触发 novel-master 技能
@@ -144,17 +144,21 @@ python3 {skill_dir}/scripts/search_corpus.py     # 语料库检索
 ## 启动命令
 
 ```bash
-# 全新创作
+# 全新创作（项目默认创建在 demo/ 下）
 novel 我想写一本{题材}小说，{简要描述}
 
-# 继续创作
+# 指定存放目录
+novel 我想写一本穿越悬疑小说，放在 ~/my-novels/ 目录下
+
+# 继续创作（自动检测 demo/ 下未完成项目）
 novel 继续写
 novel 继续写 "主角在朝堂上首次发言"
 
-# 修复
-novel 修复本章
+# 指定路径继续
+novel 继续写 ~/my-novels/大唐神探
 
-# 中途改纲
+# 修复 / 改纲
+novel 修复本章
 novel 改纲续写
 ```
 

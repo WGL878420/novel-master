@@ -2,7 +2,7 @@
 
 ## 项目结构
 ```
-novel-system/
+novel-master/
 ├── scripts/         # CLI 工具
 │   ├── init_project.py    # 初始化新项目
 │   ├── quality_gate.py    # 质量门禁检查

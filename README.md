@@ -58,7 +58,7 @@ python3 scripts/story_graph.py -p ./我的小说 extend-outline --count 20
 ## 项目结构
 
 ```
-novel-system/
+novel-master/
 ├── SKILL.md                       # Claude Code 技能入口
 ├── CLAUDE.md                      # 项目级规则
 ├── scripts/                       # CLI 工具
