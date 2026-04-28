@@ -442,6 +442,12 @@ def create_project(
         "progress": {"current_chapter": 0, "completed_chapters": [], "status": "initialized", "synced_up_to_chapter": 0},
         "summary": {"latest_events": [], "pending_foreshadowing": [], "active_conflicts": []},
         "config": {"word_limits": {"min": min_words, "max": max_words}},
+        "fanqie": {
+            "enabled": False,
+            "book_id": None,
+            "auto_publish_after_gate": False,
+            "publish_mode": "draft",
+        },
         "created_at": now,
         "last_updated": now,
     }

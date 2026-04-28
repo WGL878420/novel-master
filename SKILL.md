@@ -94,6 +94,7 @@ python3 {skill_dir}/scripts/story_graph.py       # 知识图谱维护
 python3 {skill_dir}/scripts/quality_gate.py      # 质量门禁检查
 python3 {skill_dir}/scripts/anti_ai_detector.py  # AI味检测
 python3 {skill_dir}/scripts/search_corpus.py     # 语料库检索
+python3 {skill_dir}/scripts/fanqie_publish.py    # 番茄小说发布（可选）
 ```
 
 ---
@@ -160,7 +161,46 @@ novel 继续写 ~/my-novels/大唐神探
 # 修复 / 改纲
 novel 修复本章
 novel 改纲续写
+
+# 番茄发布（需先 pip install playwright && playwright install chromium）
+novel 设置番茄发布                    # 首次配置：安装 + 登录 + 关联书籍
+novel 发布到番茄                      # 上传最新已门禁通过的章节到草稿箱
+novel 发布到番茄 1-10                 # 批量上传第1-10章
+novel 番茄状态                        # 查看上传状态
+novel 番茄书籍列表                    # 列出作家后台已有书籍
 ```
+
+---
+
+## 番茄发布功能（可选模块）
+
+需要额外安装 `playwright`，不安装不影响写作功能。
+
+### 技术方案
+基于 Playwright 浏览器会话 + 番茄作家后台 HTTP API。不是模拟点击编辑器，而是借浏览器的 Cookie 直接调 API 上传章节，稳定性优于纯 UI 自动化。
+
+### 首次配置
+```bash
+pip install playwright
+playwright install chromium
+python3 {skill_dir}/scripts/fanqie_publish.py setup
+python3 {skill_dir}/scripts/fanqie_publish.py create-book -t "书名" -g 玄幻 -s "简介..." -p <项目路径>
+```
+
+### 日常使用
+写完一章 → 门禁通过 → 自动上传草稿箱（需在 state.json 中启用 `fanqie.enabled: true`）
+
+手动上传：
+```bash
+python3 {skill_dir}/scripts/fanqie_publish.py upload -p <项目> --chapter N
+python3 {skill_dir}/scripts/fanqie_publish.py upload -p <项目> --range 1-10
+python3 {skill_dir}/scripts/fanqie_publish.py status -p <项目>
+```
+
+### 降级策略
+- Playwright 未安装 → 跳过发布，不影响写作
+- 登录过期 → 提示重新扫码
+- 上传失败 → 警告但不阻断写作流程
 
 ---
 
