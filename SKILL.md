@@ -177,7 +177,9 @@ novel 番茄书籍列表                    # 列出作家后台已有书籍
 需要额外安装 `playwright`，不安装不影响写作功能。
 
 ### 技术方案
-基于 Playwright 浏览器会话 + 番茄作家后台 HTTP API。不是模拟点击编辑器，而是借浏览器的 Cookie 直接调 API 上传章节，稳定性优于纯 UI 自动化。
+基于 Playwright 浏览器自动化操作番茄作家后台的章节编辑页面。
+打开新建章节页面后，自动填写章号、标题和正文（ProseMirror 编辑器），
+然后点击"存草稿"。与手动操作的流程一致，不受后端 API 变更影响。
 
 ### 首次配置
 ```bash
@@ -201,6 +203,11 @@ python3 {skill_dir}/scripts/fanqie_publish.py status -p <项目>
 - Playwright 未安装 → 跳过发布，不影响写作
 - 登录过期 → 提示重新扫码
 - 上传失败 → 警告但不阻断写作流程
+
+> ⚠️ **注意**：上传时如果门禁未通过（如 `conditional_pass`），需要加 `--force` 跳过门禁检查：
+> ```bash
+> python3 {skill_dir}/scripts/fanqie_publish.py upload -p <项目> --chapter N --force
+> ```
 
 ---
 

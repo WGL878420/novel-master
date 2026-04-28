@@ -656,7 +656,7 @@ async def cmd_upload(args):
                 pub_state["uploaded_chapters"][str(ch["chapter_num"])] = {
                     "title": f"第{ch['chapter_num']}章 {ch['chapter_name']}",
                     "word_count": ch["word_count"],
-                    "mode": args.mode,
+                    "mode": "draft",
                     "uploaded_at": datetime.now().isoformat(),
                     "file": ch["file"],
                 }
@@ -763,8 +763,6 @@ def main():
     sp_upload.add_argument("--book-id", help="番茄书籍 ID（不传则从项目状态读取）")
     sp_upload.add_argument("--chapter", type=int, help="指定单章章节号")
     sp_upload.add_argument("--range", help="章节范围（如 1-10）")
-    sp_upload.add_argument("--mode", default="draft", choices=["draft", "immediate"],
-                           help="发布模式：draft=草稿箱（默认） immediate=立即发布")
     sp_upload.add_argument("--force", action="store_true",
                            help="跳过门禁检查，强制上传")
 

@@ -98,7 +98,8 @@ python3 scripts/story_graph.py -p <项目> post-write --chapter N
 
 发布命令：
 ```bash
-python3 scripts/fanqie_publish.py upload -p <项目> --chapter N --mode draft
+python3 scripts/fanqie_publish.py upload -p <项目> --chapter N
+python3 scripts/fanqie_publish.py upload -p <项目> --chapter N --force  # 跳过门禁检查强制上传
 ```
 
 用户可用的提示词：
