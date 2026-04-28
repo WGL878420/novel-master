@@ -2,17 +2,37 @@
 
 综合小说创作系统，整合了工程流程、手艺知识库、一致性保障、去AI味四大维度。支持从选题诊断到完稿校验的全流程。
 
-## 安装
+## 安装（作为 Claude Code Skill）
 
 ```bash
-# 克隆仓库
-git clone git@github.com:<your-username>/novel-system.git
+# 1. 克隆仓库
+git clone git@github.com:WGL878420/novel-master.git
 
-# 创建软链接到 Claude Code 技能目录
-ln -s $(pwd)/novel-system ~/.claude/skills/novel-master
+# 2. 创建软链接到 Claude Code 技能目录
+ln -s $(pwd)/novel-master ~/.claude/skills/novel-master
 ```
 
-安装后在 Claude Code 中触发关键词 `写小说`、`创作故事` 即可使用。
+安装后在 Claude Code 中触发关键词 `写小说`、`创作故事`、`novel` 即可使用。
+
+### 验证是否安装成功
+
+```bash
+ls -la ~/.claude/skills/novel-master/
+# 应能看到 SKILL.md、CLAUDE.md、scripts/ 等文件
+```
+
+### 更新技能
+
+```bash
+cd novel-master && git pull
+```
+
+### 卸载
+
+```bash
+rm ~/.claude/skills/novel-master     # 删除软链接
+# 仓库目录保留，可手动删除
+```
 
 ## 快速开始
 
