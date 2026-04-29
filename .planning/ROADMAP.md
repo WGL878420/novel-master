@@ -8,6 +8,8 @@
 
 **Requirements:** QD-01, QD-02, QD-03, QD-04, QD-05
 
+**Status:** ✓ Complete (2026-04-29)
+
 **Success Criteria:**
 1. `qidian_publish.py login` 可完成手机验证码登录并保存认证状态
 2. `qidian_publish.py upload --chapter N` 可上传指定章节到草稿箱

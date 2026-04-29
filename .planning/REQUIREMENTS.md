@@ -25,11 +25,11 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| QD-01 | Phase 1 | Pending |
-| QD-02 | Phase 1 | Pending |
-| QD-03 | Phase 1 | Pending |
-| QD-04 | Phase 1 | Pending |
-| QD-05 | Phase 1 | Pending |
+| QD-01 | Phase 1 | ✓ Complete |
+| QD-02 | Phase 1 | ✓ Complete |
+| QD-03 | Phase 1 | ✓ Complete |
+| QD-04 | Phase 1 | ✓ Complete |
+| QD-05 | Phase 1 | ✓ Complete |
 
 **Coverage:**
 - v1 requirements: 5 total
