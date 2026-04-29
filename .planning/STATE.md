@@ -13,13 +13,13 @@ See: .planning/PROJECT.md (updated 2026-04-29)
 
 - **Current Phase:** 1 (起点发布功能实现)
 - **Progress:** 0%
-- **Plans:** 0/0 complete
+- **Plans:** 1/1 (planned, 0/1 complete)
 
 ## Phase Status
 
 | Phase | Name | Status | Plans | Progress |
 |-------|------|--------|-------|----------|
-| 1 | 起点发布功能实现 | ○ Pending | 0/0 | 0% |
+| 1 | 起点发布功能实现 | ◆ Planning | 1/1 | 0% |
 
 ---
 
