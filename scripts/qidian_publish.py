@@ -209,20 +209,12 @@ def _parse_chapter_browser(filepath: Path) -> Dict:
     body_lines = [l for l in lines[1:] if not l.strip().startswith("#")]
     body = "\n".join(body_lines).strip()
 
-    # 转 HTML
-    paragraphs = []
-    for line in body.split("\n"):
-        line = line.strip()
-        if line:
-            escaped = line.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
-            paragraphs.append(f"<p>{escaped}</p>")
-    body_html = "".join(paragraphs)
-
+    # 转纯文本（起点编辑器需要纯文本）
     return {
         "file": str(filepath),
         "chapter_num": chapter_num,
         "chapter_name": chapter_name,
-        "body_html": body_html,
+        "body_text": body,  # 纯文本，不转 HTML
         "word_count": count_chinese_chars(body),
     }
 
@@ -271,73 +263,56 @@ async def cmd_login(args):
 async def _upload_via_browser(page, book_id: str, ch: Dict) -> bool:
     """通过浏览器页面表单上传单章到草稿箱"""
     try:
-        # 起点新建章节草稿页面
+        # 1. 导航到新建章节页面
         url = f"https://write.qq.com/portal/booknovels/chaptertmp/CBID/{book_id}/addType/1.html"
         await page.goto(url, timeout=30000)
+        await page.wait_for_load_state('networkidle', timeout=15000)
+        await page.wait_for_timeout(2000)
+
+        # 2. 点击侧边栏"章节"按钮展开菜单
+        chapter_toggle = page.locator('span.side-coll-txt')
+        if await chapter_toggle.count() > 0:
+            await chapter_toggle.first.click()
+            await page.wait_for_timeout(2000)
+
+        # 3. 点击"新建章节"链接，创建新章节
+        new_chapter_link = page.locator('a[href="#ccid=new"]')
+        await new_chapter_link.wait_for(state="visible", timeout=10000)
+        await new_chapter_link.click()
         await page.wait_for_timeout(3000)
 
-        # 填标题
-        title_input = page.locator('input[name="title"], input[placeholder*="标题"], input#chapterTitle')
-        await title_input.wait_for(timeout=10000)
+        # 3. 填标题 (用 placeholder 精确匹配)
+        title_input = page.locator('input[placeholder*="章节号"]')
+        await title_input.wait_for(state="visible", timeout=15000)
         await title_input.fill(f"第{ch['chapter_num']}章 {ch['chapter_name']}")
 
-        # 填正文（可能有多重选择器）
-        content_selectors = [
-            'textarea[name="content"]',
-            'textarea#content',
-            'textarea[name="chapterContent"]',
-            'div[contenteditable="true"]',
-            'div.editor-content',
-        ]
-        content_filled = False
-        for sel in content_selectors:
-            try:
-                content_area = page.locator(sel)
-                if await content_area.count() > 0:
-                    await content_area.fill(ch["body_html"])
-                    content_filled = True
-                    break
-            except Exception:
-                continue
-
-        if not content_filled:
-            # 尝试直接用 JavaScript 注入内容
-            await page.evaluate("""(html) => {
-                // 尝试找到富文本编辑器
-                const editors = document.querySelectorAll('div[contenteditable="true"], div.fr-element, div.ProseMirror');
-                if (editors.length > 0) {
-                    editors[0].innerHTML = html;
-                    editors[0].dispatchEvent(new Event('input', { bubbles: true }));
-                } else {
-                    // 尝试找textarea
-                    const textareas = document.querySelectorAll('textarea');
-                    for (const ta of textareas) {
-                        if (ta.name.includes('content') || ta.id.includes('content')) {
-                            ta.value = html;
-                            ta.dispatchEvent(new Event('change', { bubbles: true }));
+        # 3. 填正文 (TinyMCE 编辑器，需通过 iframe 操作)
+        await page.evaluate("""(text) => {
+            // 尝试 TinyMCE API
+            if (window.tinymce && window.tinymce.get('mce_0')) {
+                window.tinymce.get('mce_0').setContent('<p>' + text.split('\\n').map(function(t){ return t.trim() ? '<p>' + t + '</p>' : ''; }).join('') + '</p>');
+            } else {
+                // 直接操作 iframe 内的 body
+                var iframes = document.querySelectorAll('iframe');
+                for (var i = 0; i < iframes.length; i++) {
+                    try {
+                        var body = iframes[i].contentDocument.body;
+                        if (body && body.innerHTML !== undefined) {
+                            body.innerHTML = '<p>' + text.split('\\n').map(function(t){ return t.trim() ? t + '<br>' : '<br>'; }).join('') + '</p>';
+                            body.dispatchEvent(new Event('input', { bubbles: true }));
                             break;
                         }
-                    }
+                    } catch(e) {}
                 }
-            }""", ch["body_html"])
+            }
+        }""", ch["body_text"])
+        await page.wait_for_timeout(2000)
 
-        # 点击保存按钮
-        save_selectors = [
-            'button:has-text("保存")',
-            'button:has-text("存草稿")',
-            'button:has-text("发布")',
-            'a:has-text("保存")',
-            'button[type="submit"]',
-        ]
-        for sel in save_selectors:
-            try:
-                save_btn = page.locator(sel)
-                if await save_btn.count() > 0:
-                    await save_btn.click()
-                    await page.wait_for_timeout(2000)
-                    break
-            except Exception:
-                continue
+        # 点击保存按钮 (button.ui-button 包含"保存")
+        save_btn = page.locator('button.ui-button:has-text("保存")')
+        await save_btn.wait_for(timeout=5000)
+        await save_btn.click()
+        await page.wait_for_timeout(3000)
 
         return True
     except Exception as e:
