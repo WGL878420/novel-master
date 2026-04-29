@@ -10,7 +10,8 @@ novel-master/
 │   ├── story_graph.py     # 知识图谱
 │   ├── event_matrix.py    # 事件节奏
 │   ├── search_corpus.py   # 语料库
-│   └── fanqie_publish.py  # 番茄小说发布（可选，需 Playwright）
+│   ├── fanqie_publish.py  # 番茄小说发布（可选，需 Playwright）
+│   └── qidian_publish.py   # 起点小说发布（可选，需 Playwright）
 ├── references/
 │   ├── guides/            # 写作指南
 │   │   ├── chapter-craft.md   # 章节工艺（含字数规则）
@@ -90,37 +91,60 @@ python3 scripts/story_graph.py -p <项目> post-write --chapter N
    - 列出检查清单：新角色？新地点？属性变化？伏笔？
    - 更新 state.json 的 `synced_up_to_chapter` 标记
 
-### 写后发布（可选，需配置番茄）
-门禁通过 + post-write 完成后，检查 `state/current/state.json` 中 `fanqie.enabled` 和 `fanqie.auto_publish_after_gate`：
+### 写后发布（可选，需配置番茄/起点）
+门禁通过 + post-write 完成后，检查 `state/current/state.json` 中的发布配置：
+
+**番茄发布：**
+检查 `fanqie.enabled` 和 `fanqie.auto_publish_after_gate`：
 - **两者都为 true** → **自动**执行发布（不许等用户催，和 post-write 一样）
 - **enabled=true 但 auto=false** → 用户说"发布到番茄"时才执行
 - **enabled=false** → 完全跳过
 
+**起点发布：**
+检查 `qidian.enabled` 和 `qidian.auto_publish_after_gate`：
+- **两者都为 true** → **自动**执行发布
+- **enabled=true 但 auto=false** → 用户说"发布到起点"时才执行
+- **enabled=false** → 完全跳过
+
 发布命令：
 ```bash
+# 番茄
 python3 scripts/fanqie_publish.py upload -p <项目> --chapter N
 python3 scripts/fanqie_publish.py upload -p <项目> --chapter N --force  # 跳过门禁检查强制上传
+
+# 起点
+python3 scripts/qidian_publish.py upload -p <项目> --chapter N
+python3 scripts/qidian_publish.py upload -p <项目> --chapter N --force  # 跳过门禁检查强制上传
 ```
 
 用户可用的提示词：
-- **"发布到番茄"** → 上传最新已过门禁章节到草稿箱
-- **"发布到番茄 1-10"** → 批量上传第1-10章
-- **"设置番茄发布"** → 首次配置（引导 setup + login + create-book）
-- **"番茄状态"** → 查看上传状态
-- **"番茄书籍列表"** → 列出作家后台书籍
+- **"发布到番茄"** → 上传最新已过门禁章节到番茄草稿箱
+- **"发布到番茄 1-10"** → 批量上传第1-10章到番茄
+- **"发布到起点"** → 上传最新已过门禁章节到起点草稿箱
+- **"发布到起点 1-10"** → 批量上传第1-10章到起点
+- **"设置番茄发布"** → 首次配置番茄（引导 setup + login）
+- **"设置起点发布"** → 首次配置起点（引导 login）
+- **"番茄状态"** → 查看番茄上传状态
+- **"起点状态"** → 查看起点上传状态
 
-降级策略：
+降级策略（番茄和起点通用）：
 - Playwright 未安装 → 跳过发布，提示用户手动操作
-- 登录态过期 → 暂停发布，提示 `python3 scripts/fanqie_publish.py login`
+- 登录态过期 → 暂停发布，提示重新 login
 - 上传失败 → 警告但**不阻断**写作流程，章节已保存在本地 manuscript/
-- 未绑定 book_id → 跳过，提示用户先运行 `fanqie_publish.py setup` + `create-book`
+- 未绑定 book_id → 跳过，提示用户确认 book_id
 
 首次配置：
 ```bash
+# 番茄
 pip install playwright && playwright install chromium
 python3 scripts/fanqie_publish.py setup               # 安装 + 登录
-python3 scripts/fanqie_publish.py create-book -t "书名" -g 玄幻 -s "简介" -p <项目>  # 创建书并绑定
 # 然后在 state.json 中设置 fanqie.enabled=true, fanqie.auto_publish_after_gate=true
+
+# 起点
+pip install playwright && playwright install chromium
+python3 scripts/qidian_publish.py login                # 登录（起点不支持账密，仅手机验证码）
+# 然后在 state.json 中设置 qidian.enabled=true, qidian.auto_publish_after_gate=true
+# 注意：起点 book_id 需要用户在 URL 中获取，格式：https://write.qq.com/.../CBID/{book_id}/...
 ```
 
 ### 检查
@@ -144,6 +168,12 @@ python3 scripts/fanqie_publish.py create-book -t "书名" -g 玄幻 -s "简介" 
 - `state/fanqie-auth-state.json`（或 `~/.novel-master/`）保存浏览器登录态
 - 发布命令：`python3 scripts/fanqie_publish.py upload -p <项目> --chapter N`
 - 查看状态：`python3 scripts/fanqie_publish.py status -p <项目>`
+
+## 起点发布状态
+- `state/qidian-publish-state.json` 记录已上传章节（book_id 内置为 35730802204107809）
+- `~/.novel-master/qidian-auth-state.json` 保存浏览器登录态
+- 发布命令：`python3 scripts/qidian_publish.py upload -p <项目> --chapter N`
+- 查看状态：`python3 scripts/qidian_publish.py status -p <项目>`
 
 ## 记忆系统（防跑偏）
 
