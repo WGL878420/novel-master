@@ -10,12 +10,12 @@
 
 ## Requirements
 
-### Active
+### Validated
 
-- [ ] 起点登录功能（手机验证码）
-- [ ] 指定章节上传到草稿箱
-- [ ] 状态查询（查看已上传章节）
-- [ ] 与现有番茄发布功能共用状态管理框架
+- ✓ 起点登录功能（手机验证码） — Phase 1
+- ✓ 指定章节上传到草稿箱 — Phase 1
+- ✓ 状态查询（查看已上传章节） — Phase 1
+- ✓ 与现有番茄发布功能共用状态管理框架 — Phase 1
 
 ### Out of Scope
 
@@ -57,4 +57,4 @@ novel-master 已实现番茄小说自动发布（`fanqie_publish.py`），使用
 | 草稿箱而非直接发布 | 草稿箱更安全，给用户检查机会 | — Pending |
 
 ---
-*Last updated: 2026/04/29 after initialization*
+*Last updated: 2026/04/29 after Phase 1 completion*
