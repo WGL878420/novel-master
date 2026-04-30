@@ -273,11 +273,55 @@ def generate_brief(project_root: Path, chapter: int) -> str:
 
     lines.append("")
 
-    # ── 最近事件 ──
+    # ── 本章章纲 ──
+    if outline_file.exists():
+        try:
+            ot = read_md(outline_file)
+            for line in ot.split("\n"):
+                if line.startswith("|") and len(line.split("|")) >= 2:
+                    try:
+                        ch = int(line.split("|")[1].strip())
+                        if ch == chapter:
+                            parts = [p.strip() for p in line.split("|")]
+                            lines.append("## 本章章纲")
+                            col_names = ["章号", "章名", "主线", "副线/冲突", "新信息", "钩子"]
+                            for idx, col in enumerate(col_names):
+                                if idx < len(parts) and parts[idx]:
+                                    lines.append(f"- **{col}**: {parts[idx]}")
+                            lines.append("")
+                            break
+                    except ValueError:
+                        pass
+        except Exception:
+            pass
+
+    # ── 最近事件回顾（合并 timeline + state） ──
     events = state.get("summary", {}).get("latest_events", [])
-    if events:
+    timeline_file = project_root / "knowledge" / "timeline.md"
+    timeline_events = []
+    if timeline_file.exists():
+        try:
+            tl = read_md(timeline_file)
+            for line in reversed(tl.split("\n")):
+                if line.startswith("- 第") and "章" in line:
+                    timeline_events.append(line.lstrip("- ").strip())
+                    if len(timeline_events) >= 3:
+                        break
+        except Exception:
+            pass
+
+    merged_events = []
+    seen = set()
+    for ev in (timeline_events + events):
+        if ev and ev not in seen:
+            merged_events.append(ev)
+            seen.add(ev)
+        if len(merged_events) >= 5:
+            break
+
+    if merged_events:
         lines.append("## 最近事件回顾")
-        for i, ev in enumerate(events[:3], 1):
+        for i, ev in enumerate(merged_events[:5], 1):
             lines.append(f"{i}. {ev}")
         lines.append("")
 
@@ -304,22 +348,30 @@ def generate_brief(project_root: Path, chapter: int) -> str:
             lines.append(f"- {desc}{ch_tag}")
         lines.append("")
 
-    # ── 活跃角色 ──
+    # ── 活跃角色（优先显示最近登场的） ──
     chars = [n for n in graph.get("nodes", []) if n["type"] == "character"]
     if chars:
-        lines.append(f"## 活跃角色 ({len(chars)})")
-        for c in chars:
+        def _recent_score(c):
+            intro = c.get("chapter_intro", 0) or 0
+            attrs = c.get("attributes", [])
+            last_attr_ch = max((a.get("chapter", 0) for a in attrs), default=0)
+            return max(intro, last_attr_ch)
+
+        chars_sorted = sorted(chars, key=_recent_score, reverse=True)
+        recent_chars = chars_sorted[:10]
+        lines.append(f"## 活跃角色 ({len(recent_chars)}/{len(chars)} 显示最近)")
+        for c in recent_chars:
             name = c["name"]
             attrs = c.get("attributes", [])
-            # 保留每个key的最新值
             latest = {}
             for a in attrs:
                 latest[a["key"]] = a["value"]
             attr_str = " | ".join(f"{k}={v}" for k, v in latest.items())
+            intro_tag = f" [第{c.get('chapter_intro', '?')}章]" if c.get("chapter_intro") else ""
             if attr_str:
-                lines.append(f"- **{name}**: {attr_str}")
+                lines.append(f"- **{name}**{intro_tag}: {attr_str}")
             else:
-                lines.append(f"- **{name}**")
+                lines.append(f"- **{name}**{intro_tag}")
         lines.append("")
 
     # ── 地点 ──
@@ -352,8 +404,121 @@ def generate_brief(project_root: Path, chapter: int) -> str:
     return "\n".join(lines)
 
 
+def _extract_character_names(project_root: Path) -> List[str]:
+    """从 bible/01-character-profiles.md 提取已定义的角色名"""
+    profile_file = project_root / "bible" / "01-character-profiles.md"
+    if not profile_file.exists():
+        return []
+    text = read_md(profile_file)
+    names = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("## ") or line.startswith("### "):
+            name = line.lstrip("#").strip()
+            name = re.sub(r'[（(].*?[）)]', '', name).strip()
+            if name and len(name) <= 10:
+                names.append(name)
+        m = re.match(r'^[-*]\s+\*{0,2}姓名\*{0,2}[：:]\s*(.+)', line)
+        if m:
+            n = m.group(1).strip()
+            if n and n not in names:
+                names.append(n)
+    return names
+
+
+def _extract_location_names(project_root: Path) -> List[str]:
+    """从 bible/00-world-building.md 提取已定义的地点名"""
+    wb_file = project_root / "bible" / "00-world-building.md"
+    if not wb_file.exists():
+        return []
+    text = read_md(wb_file)
+    locs = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("## ") or line.startswith("### "):
+            name = line.lstrip("#").strip()
+            name = re.sub(r'[（(].*?[）)]', '', name).strip()
+            if name and len(name) <= 15 and any(k in line.lower() for k in ["地点", "地图", "场景", "城", "山", "宗", "国", "域", "镇", "村", "岛", "谷", "洞", "殿", "阁", "楼", "府"]):
+                locs.append(name)
+    return locs
+
+
+def _auto_sync_graph(project_root: Path, chapter: int, text: str):
+    """自动将正文中出现的 bible 角色/地点写入知识图谱（首次出现才添加）"""
+    if not text:
+        return [], []
+
+    graph = load_graph(project_root)
+    existing_ids = {n["id"] for n in graph["nodes"]}
+    existing_names = {n["name"] for n in graph["nodes"]}
+
+    added_chars = []
+    added_locs = []
+
+    char_names = _extract_character_names(project_root)
+    for name in char_names:
+        if name in text and name not in existing_names:
+            node_id = name.lower().replace(" ", "_")
+            if node_id not in existing_ids:
+                add_node(project_root, node_id, "character", name, chapter_intro=chapter)
+                added_chars.append(name)
+                existing_ids.add(node_id)
+                existing_names.add(name)
+
+    loc_names = _extract_location_names(project_root)
+    for name in loc_names:
+        if name in text and name not in existing_names:
+            node_id = f"loc_{name.lower().replace(' ', '_')}"
+            if node_id not in existing_ids:
+                add_node(project_root, node_id, "location", name, chapter_intro=chapter)
+                added_locs.append(name)
+                existing_ids.add(node_id)
+                existing_names.add(name)
+
+    return added_chars, added_locs
+
+
+EVENT_TYPE_KEYWORDS = {
+    "bond_deepening": [
+        "信任", "温柔", "拥抱", "泪", "思念", "关心", "喜欢", "爱", "心疼",
+        "道歉", "原谅", "陪伴", "依赖", "情感", "暧昧", "告白", "心意",
+        "默契", "守护", "承诺", "表白", "亲吻", "深情",
+    ],
+    "world_painting": [
+        "地图", "历史", "规则", "体系", "阵法", "丹药", "功法", "秘境",
+        "传说", "遗迹", "文明", "种族", "大陆", "王国", "势力范围",
+        "修炼", "境界", "法则", "天地", "灵气",
+    ],
+    "faction_building": [
+        "势力", "联盟", "门派", "组织", "招募", "收编", "盟友", "投靠",
+        "效忠", "反叛", "阵营", "帮派", "家族", "宗门", "弟子",
+    ],
+    "tension_escalation": [
+        "升级", "突破", "晋级", "新敌", "阴谋", "更强", "觉醒",
+        "进化", "蜕变", "瓶颈", "顿悟", "成长", "实力",
+    ],
+    "conflict_thrill": [
+        "冲突", "战斗", "对决", "争吵", "背叛", "追杀", "逃亡",
+        "生死", "危机", "对抗", "打斗", "愤怒", "复仇", "陷阱",
+    ],
+}
+
+
+def _classify_event_type(text: str) -> str:
+    """根据正文内容自动推断事件类型"""
+    scores = {}
+    for etype, keywords in EVENT_TYPE_KEYWORDS.items():
+        score = sum(text.count(kw) for kw in keywords)
+        scores[etype] = score
+
+    if not scores or max(scores.values()) == 0:
+        return "conflict_thrill"
+
+    return max(scores, key=scores.get)
+
+
 def post_write(project_root: Path, chapter: int):
-    """写后更新：将本章新信息同步到知识图谱和 timeline"""
+    """写后更新：自动同步知识图谱 + 智能分类事件 + 更新 timeline"""
     if chapter < 1:
         print("❌ 无效章节号")
         return
@@ -369,7 +534,10 @@ def post_write(project_root: Path, chapter: int):
     else:
         text = read_md(matches[0])
 
-    # 2. 更新 timeline.md
+    # 2. 自动同步知识图谱（从 bible 提取角色/地点，匹配正文后写入图谱）
+    added_chars, added_locs = _auto_sync_graph(project_root, chapter, text)
+
+    # 3. 更新 timeline.md
     timeline_file = project_root / "knowledge" / "timeline.md"
     ensure_dir(timeline_file.parent)
     if not timeline_file.exists():
@@ -379,61 +547,62 @@ def post_write(project_root: Path, chapter: int):
     with open(timeline_file, "a", encoding="utf-8") as f:
         f.write(f"- 第{chapter}章: {summary}\n")
 
-    # 3. 同步更新 event_matrix
+    # 4. 同步更新 event_matrix（智能分类事件类型）
     matrix_file = project_root / "knowledge" / "event_matrix.json"
+    event_type = _classify_event_type(text) if text else "conflict_thrill"
     if matrix_file.exists():
         matrix = read_json(matrix_file)
         already_logged = any(e["chapter"] == chapter for e in matrix.get("events", []))
         if not already_logged:
             matrix.setdefault("events", []).append({
                 "chapter": chapter,
-                "type": "conflict_thrill",
+                "type": event_type,
                 "description": summary[:100],
                 "timestamp": datetime.now().isoformat(),
             })
             write_json(matrix_file, matrix)
 
-    # 4. 标记 synced_up_to_chapter
+    # 5. 标记 synced_up_to_chapter
     old_sync = state.get("progress", {}).get("synced_up_to_chapter", 0)
     state.setdefault("progress", {})["synced_up_to_chapter"] = chapter
     state["last_updated"] = datetime.now().isoformat()
     ensure_dir(state_file.parent)
     write_json(state_file, state)
 
-    # 5. 扫描正文，匹配知识图谱中的角色
+    # 6. 扫描正文，匹配知识图谱中的已有角色/地点
     graph = load_graph(project_root)
-    chars_in_text = []
-    for n in graph.get("nodes", []):
-        if n["type"] == "character" and text and n["name"] in text:
-            chars_in_text.append(n["name"])
-    locs_in_text = []
-    for n in graph.get("nodes", []):
-        if n["type"] == "location" and text and n["name"] in text:
-            locs_in_text.append(n["name"])
+    chars_in_text = [n["name"] for n in graph.get("nodes", [])
+                     if n["type"] == "character" and text and n["name"] in text]
+    locs_in_text = [n["name"] for n in graph.get("nodes", [])
+                    if n["type"] == "location" and text and n["name"] in text]
+
+    try:
+        from event_matrix import EVENT_TYPES
+        event_label = EVENT_TYPES.get(event_type, event_type)
+    except ImportError:
+        event_label = event_type
 
     print(f"  ✅ 同步标记：第{chapter}章（之前同步到第{old_sync}章）")
     print(f"  ✅ 时间线已更新")
-    print(f"  ✅ 事件矩阵已同步")
+    print(f"  ✅ 事件矩阵已同步（类型：{event_label}）")
+    if added_chars:
+        print(f"  🆕 自动添加角色到图谱：{', '.join(added_chars)}")
+    if added_locs:
+        print(f"  🆕 自动添加地点到图谱：{', '.join(added_locs)}")
     if chars_in_text:
         print(f"  📖 本章出现的角色：{', '.join(chars_in_text)}")
     if locs_in_text:
         print(f"  📖 本章出现的地点：{', '.join(locs_in_text)}")
     print()
     print(f"  {'='*50}")
-    print(f"  写后检查清单")
+    print(f"  写后检查清单（图谱已自动同步，以下仅需人工确认）")
     print(f"  {'='*50}")
-    print(f"  1. 角色档案")
-    print(f"     - 新角色登场？→ 补充到 01-character-profiles.md")
-    print(f"     - 现有角色有变化？→ 更新 bible + add-attr")
-    print(f"  2. 世界观")
-    print(f"     - 新地点/新势力？→ 补充到 00-world-building.md")
+    print(f"  1. 角色属性变化？→ add-attr（如身份/位置/状态变更）")
+    print(f"  2. 角色关系变化？→ add-edge（如新结盟/敌对/感情）")
     print(f"  3. 伏笔")
-    print(f"     - 埋新伏笔？→ story_graph add-node --type foreshadowing --chapter {chapter}")
-    print(f"     - 收伏笔？→ story_graph resolve-fs --id xxx")
-    print(f"  4. 知识图谱")
-    print(f"     - 新角色？→ story_graph add-node --type character --chapter {chapter}")
-    print(f"     - 属性变化？→ story_graph add-attr --id xxx --key 身份 --value xxx")
-    print(f"  5. 下一步")
+    print(f"     - 埋新伏笔？→ add-node --type foreshadowing --chapter {chapter}")
+    print(f"     - 收伏笔？→ resolve-fs --id xxx")
+    print(f"  4. 下一步")
     print(f"     - brief 看节奏建议")
     print(f"     - 大纲快用完则 extend-outline")
     print(f"  {'='*50}")
@@ -630,13 +799,30 @@ def extend_outline(project_root: Path, add_chapters: int, start_from: int = 0):
             except ValueError:
                 pass
 
-    # 判断当前进度所在的幕
-    # 三幕大致划分：act1=前25%, act2=25-75%, act3=75%+
-    act = 3  # 默认延续第三幕
-    if last_ch <= 5:
-        act = 1
-    elif last_ch <= 15:
-        act = 2
+    # 判断当前进度所在的幕（优先从大纲标记推断）
+    act = 3
+    detected_from_outline = False
+    for line in reversed(table_lines[2:]):
+        parts = line.split("|")
+        full_line = line.lower()
+        if "第一幕" in full_line or "第1幕" in full_line or "act1" in full_line or "act 1" in full_line:
+            act = 1
+            detected_from_outline = True
+            break
+        elif "第二幕" in full_line or "第2幕" in full_line or "act2" in full_line or "act 2" in full_line:
+            act = 2
+            detected_from_outline = True
+            break
+        elif "第三幕" in full_line or "第3幕" in full_line or "act3" in full_line or "act 3" in full_line:
+            act = 3
+            detected_from_outline = True
+            break
+
+    if not detected_from_outline:
+        if last_ch <= 5:
+            act = 1
+        elif last_ch <= 15:
+            act = 2
 
     if start_from == 0:
         start_from = last_ch + 1

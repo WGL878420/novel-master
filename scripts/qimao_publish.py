@@ -7,6 +7,7 @@
 子命令:
     login   手机验证码登录
     upload  上传章节到草稿箱
+    list-drafts  查看草稿箱并与本地状态对比（对齐用）
     status  查看发布状态
 """
 
@@ -15,9 +16,10 @@ import asyncio
 import json
 import re
 import sys
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 try:
     from utils import (
@@ -217,20 +219,22 @@ async def cmd_upload(args):
 
     book_id = args.book_id or pub_state.get("book_id") or BOOK_ID
 
+    # 检查本地记录：如果该章已上传过，要求 --force 才能重新上传
+    if not args.force and str(args.chapter) in pub_state.get("uploaded_chapters", {}):
+        info = pub_state["uploaded_chapters"][str(args.chapter)]
+        print(f"⚠️  第{args.chapter:03d}章已在本地记录为已上传（{info.get('uploaded_at','?')[:16]}）")
+        print(f"   如需重新上传请加 --force")
+        return 1
+
     chapter_files = get_chapter_files(project_root)
     if not chapter_files:
         print("❌ manuscript/ 下没有章节文件")
         return 1
 
-    if args.chapter:
-        chapter_files = [f for f in chapter_files if chapter_number(f.name) == args.chapter]
-    else:
-        uploaded = set(pub_state.get("uploaded_chapters", {}).keys())
-        chapter_files = [f for f in chapter_files if str(chapter_number(f.name)) not in uploaded]
-
+    chapter_files = [f for f in chapter_files if chapter_number(f.name) == args.chapter]
     if not chapter_files:
-        print("✅ 没有需要上传的章节（全部已上传）")
-        return 0
+        print(f"❌ 未找到第{args.chapter:03d}章的稿件文件")
+        return 1
 
     if not args.force:
         valid_files = []
@@ -251,8 +255,8 @@ async def cmd_upload(args):
         print("❌ 没有通过门禁的章节可上传。用 --force 可跳过门禁检查")
         return 1
 
-    chapters_to_upload = [_parse_chapter_browser(f) for f in chapter_files]
-    print(f"\n📤 准备上传 {len(chapters_to_upload)} 章到草稿箱（book_id: {book_id}）")
+    ch = _parse_chapter_browser(chapter_files[0])
+    print(f"\n📤 上传单章到草稿箱: 第{ch['chapter_num']}章 {ch['chapter_name']} ({ch['word_count']}字, book_id: {book_id})")
 
     pw, browser, context, page = await _launch_browser(auth_path)
 
@@ -263,36 +267,23 @@ async def cmd_upload(args):
 
         await _save_auth_state(context, auth_path)
 
-        success_count = 0
-        fail_count = 0
+        print(f"  📝 上传中...", end=" ")
+        ok = await _upload_via_browser(page, book_id, ch)
 
-        for ch in chapters_to_upload:
-            print(f"  📝 上传第{ch['chapter_num']}章: {ch['chapter_name']} ({ch['word_count']}字)...", end=" ")
-
-            ok = await _upload_via_browser(page, book_id, ch)
-
-            if ok:
-                print("✅")
-                success_count += 1
-                pub_state["uploaded_chapters"][str(ch["chapter_num"])] = {
-                    "title": f"第{ch['chapter_num']}章 {ch['chapter_name']}",
-                    "word_count": ch["word_count"],
-                    "mode": "draft",
-                    "uploaded_at": datetime.now().isoformat(),
-                    "file": ch["file"],
-                }
-            else:
-                print("❌")
-                fail_count += 1
-
-            await asyncio.sleep(1)
-
-        _save_publish_state(project_root, pub_state)
-
-        print(f"\n{'=' * 40}")
-        print(f"上传完成: ✅ {success_count} 成功, ❌ {fail_count} 失败")
-
-        return 0 if fail_count == 0 else 1
+        if ok:
+            print("✅")
+            pub_state["uploaded_chapters"][str(ch["chapter_num"])] = {
+                "title": f"第{ch['chapter_num']}章 {ch['chapter_name']}",
+                "word_count": ch["word_count"],
+                "mode": "draft",
+                "uploaded_at": datetime.now().isoformat(),
+                "file": ch["file"],
+            }
+            _save_publish_state(project_root, pub_state)
+            return 0
+        else:
+            print("❌")
+            return 1
 
     finally:
         await browser.close()
@@ -332,18 +323,15 @@ async def _upload_via_browser(page, book_id: str, ch: Dict) -> bool:
         await save_btn.wait_for(timeout=5000)
         await save_btn.click()
 
-        # 5. 等待弹窗出现，等待倒计时结束（按钮不再是disabled），然后点击
-        await page.wait_for_timeout(1000)
-        # 弹窗里的按钮文字是"我已阅读并知晓(N)"，倒计时结束后disabled会移除
+        # 5. 等待弹窗出现，倒计时结束后按钮 disabled 移除，然后点击确认
         read_ack_btn = page.locator('a.qm-btn.important:has-text("我已阅读并知晓")')
-        await read_ack_btn.wait_for(state="visible", timeout=10000)
-        # 等待按钮不再是disabled（倒计时结束）
+        await read_ack_btn.wait_for(state="visible", timeout=15000)
+        # 等待按钮 disabled 属性消失（倒计时结束）
         while True:
             disabled = await read_ack_btn.get_attribute("disabled")
             if disabled is None:
                 break
             await page.wait_for_timeout(500)
-        # 点击确认
         await read_ack_btn.click()
         await page.wait_for_timeout(3000)
 
@@ -352,6 +340,108 @@ async def _upload_via_browser(page, book_id: str, ch: Dict) -> bool:
     except Exception as e:
         print(f"⚠️  浏览器上传异常: {e}")
         return False
+
+
+async def cmd_list_drafts(args):
+    """查看七猫草稿箱，可选与本地发布状态对比"""
+    if not _check_playwright():
+        return 1
+
+    project_root = Path(args.project) if args.project else None
+    auth_path = _get_auth_state_path(project_root)
+    pub_state = _load_publish_state(project_root) if project_root else {}
+
+    book_id = args.book_id or pub_state.get("book_id") or BOOK_ID
+
+    pw, browser, context, page = await _launch_browser(auth_path)
+
+    try:
+        if not await _navigate_and_check_login(page):
+            print("❌ 登录已过期，请重新登录: python3 qimao_publish.py login")
+            return 1
+
+        # 导航到章节管理页，然后切到草稿箱
+        manage_url = f"https://zuozhe.qimao.com/front/book-manage/manage?id={book_id}"
+        await page.goto(manage_url, timeout=20000, wait_until="networkidle")
+        await page.wait_for_timeout(3000)
+
+        if "login" in page.url:
+            print("❌ 登录已过期，请重新登录")
+            return 1
+
+        # 点击"草稿箱"标签
+        draft_tab = page.locator("text=草稿箱").first
+        if await draft_tab.is_visible():
+            await draft_tab.click()
+            await page.wait_for_timeout(3000)
+        else:
+            # 可能已经在草稿箱页面
+            pass
+
+        # 提取草稿箱总字数
+        body_text = await page.inner_text("body")
+        total_match = re.search(r"当前草稿箱共计[：:]\s*(\d+)字", body_text)
+
+        # 提取草稿列表
+        rows = page.locator(".el-table__body tr.el-table__row")
+        row_count = await rows.count()
+
+        drafts = []
+        for i in range(row_count):
+            cells = rows.nth(i).locator("td div.cell")
+            cell_count = await cells.count()
+            if cell_count >= 3:
+                name = (await cells.nth(0).inner_text()).strip()
+                words = (await cells.nth(1).inner_text()).strip()
+                created = (await cells.nth(2).inner_text()).strip()
+                drafts.append({"name": name, "words": words, "created": created})
+
+        # 显示输出
+        print(f"\n📋 七猫草稿箱 (book_id: {book_id})")
+        if total_match:
+            print(f"   当前共 {len(drafts)} 章草稿，{total_match.group(1)} 字")
+        else:
+            print(f"   当前共 {len(drafts)} 章草稿")
+        print()
+
+        if drafts:
+            # 对比本地状态
+            local_uploaded = pub_state.get("uploaded_chapters", {}) if project_root else {}
+
+            # 解析章节号（假设格式 "第N章 XXXX"）
+            def parse_chapter_num(name: str) -> str:
+                m = re.search(r"第(\d+)章", name)
+                return m.group(1) if m else name
+
+            print(f"   {'章节名称':<30} {'字数':<8} {'创建时间':<20} {'本地状态'}")
+            print(f"   {'-' * 75}")
+            for d in drafts:
+                ch_num = parse_chapter_num(d["name"])
+                local = local_uploaded.get(ch_num)
+                if local:
+                    status = "✅ 已同步"
+                else:
+                    status = "⬜ 本地未记录"
+                print(f"   {d['name']:<30} {d['words']:<8} {d['created']:<20} {status}")
+
+            # 检查本地有但服务器没有的章节
+            if project_root:
+                local_ch_nums = set(local_uploaded.keys())
+                server_ch_nums = {parse_chapter_num(d["name"]) for d in drafts}
+                missing_on_server = local_ch_nums - server_ch_nums
+                if missing_on_server:
+                    print(f"\n   ⚠️  以下章节本地有记录但服务器草稿箱中未找到：")
+                    for ch in sorted(missing_on_server, key=int):
+                        info = local_uploaded[ch]
+                        print(f"      第{int(ch):03d}章 {info.get('title','?')} (上传于 {info.get('uploaded_at','?')[:16]})")
+        else:
+            print("   草稿箱为空")
+
+        return 0
+
+    finally:
+        await browser.close()
+        await pw.stop()
 
 
 def cmd_status(args):
@@ -392,17 +482,21 @@ def main():
     sp_upload = subparsers.add_parser("upload", help="上传章节到草稿箱")
     sp_upload.add_argument("-p", "--project", required=True, help="项目路径")
     sp_upload.add_argument("--book-id", help="七猫书籍 ID")
-    sp_upload.add_argument("--chapter", type=int, help="指定单章章节号")
+    sp_upload.add_argument("--chapter", type=int, required=True, help="指定单章章节号")
     sp_upload.add_argument("--force", action="store_true", help="跳过门禁检查")
 
     sp_status = subparsers.add_parser("status", help="查看发布状态")
     sp_status.add_argument("-p", "--project", required=True, help="项目路径")
 
+    sp_list = subparsers.add_parser("list-drafts", help="查看七猫草稿箱，对比本地发布状态")
+    sp_list.add_argument("-p", "--project", help="项目路径（对比本地状态时需提供）")
+    sp_list.add_argument("--book-id", help="七猫书籍 ID（默认取自本地状态或 11901780）")
+
     args = parser.parse_args()
 
-    cmd_map = {"login": cmd_login, "upload": cmd_upload, "status": cmd_status}
+    cmd_map = {"login": cmd_login, "upload": cmd_upload, "status": cmd_status, "list-drafts": cmd_list_drafts}
 
-    if args.command in ("login", "upload"):
+    if args.command in ("login", "upload", "list-drafts"):
         exit_code = asyncio.run(cmd_map[args.command](args))
     else:
         exit_code = cmd_map[args.command](args)

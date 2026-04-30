@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from utils import read_md
+from utils import read_md, count_chinese_chars
 
 
 # ========== 检测模式 ==========
@@ -179,19 +179,20 @@ def detect_chapter(text: str) -> Dict:
     }
 
 
-def assess_quality(detect_result: Dict, total_chars: int) -> Dict:
-    """综合评估文本质量"""
+def assess_quality(detect_result: Dict, total_chars: int, threshold: float = 3.0) -> Dict:
+    """综合评估文本质量（使用加权密度判定）"""
     hits = detect_result["total_hits"]
-    score = detect_result["weighted_score"]
+    weighted = detect_result["weighted_score"]
     density = hits / max(total_chars, 1) * 1000
+    weighted_density = weighted / max(total_chars, 1) * 1000
 
-    if density <= 1:
+    if weighted_density <= threshold * 0.33:
         level = "优秀"
         verdict = "pass"
-    elif density <= 3:
+    elif weighted_density <= threshold:
         level = "良好"
         verdict = "pass"
-    elif density <= 6:
+    elif weighted_density <= threshold * 2:
         level = "需优化"
         verdict = "warn"
     else:
@@ -202,14 +203,15 @@ def assess_quality(detect_result: Dict, total_chars: int) -> Dict:
         "verdict": verdict,
         "level": level,
         "density": round(density, 2),
+        "weighted_density": round(weighted_density, 2),
         "total_hits": hits,
-        "score": score,
+        "score": weighted,
     }
 
 
-def generate_report(detect_result: Dict, total_chars: int) -> str:
+def generate_report(detect_result: Dict, total_chars: int, threshold: float = 3.0) -> str:
     """生成可读报告"""
-    quality = assess_quality(detect_result, total_chars)
+    quality = assess_quality(detect_result, total_chars, threshold=threshold)
     lines = []
     lines.append(f"## AI味检测报告\n")
     lines.append(f"**总体评估**: {quality['level']}")
@@ -243,10 +245,10 @@ def generate_report(detect_result: Dict, total_chars: int) -> str:
     return "\n".join(lines)
 
 
-def two_pass_polish(text: str) -> Dict:
+def two_pass_polish(text: str, threshold: float = 3.0) -> Dict:
     """两遍润色法（输出提示，不直接改原文）"""
     detect = detect_chapter(text)
-    quality = assess_quality(detect, len(text))
+    quality = assess_quality(detect, count_chinese_chars(text), threshold=threshold)
 
     polish_prompt_parts = []
 
@@ -283,20 +285,21 @@ def main():
 
     args = parser.parse_args()
     text = read_md(Path(args.file))
+    cn_chars = count_chinese_chars(text)
 
     if args.action == "detect":
         result = detect_chapter(text)
-        quality = assess_quality(result, len(text))
+        quality = assess_quality(result, cn_chars, threshold=args.threshold)
         print(json.dumps({"quality": quality, "categories": result["categories"]},
                         ensure_ascii=False, indent=2))
 
     elif args.action == "report":
         result = detect_chapter(text)
-        report = generate_report(result, len(text))
+        report = generate_report(result, cn_chars, threshold=args.threshold)
         print(report)
 
     elif args.action == "polish":
-        result = two_pass_polish(text)
+        result = two_pass_polish(text, threshold=args.threshold)
         print(f"质量评估: {result['quality']['level']}")
         print(f"需要润色: {'是' if result['needs_polish'] else '否'}")
         if result["polish_prompt"]:
